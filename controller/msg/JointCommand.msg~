@@ -1,0 +1,5 @@
+Header header
+
+int32[] Mode
+int32[] Open
+int32[] CmdValue

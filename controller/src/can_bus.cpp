@@ -1,0 +1,274 @@
+#include "ros/ros.h"
+//#include "std_msgs/String.h"
+#include "std_msgs/MultiArrayLayout.h"
+#include "std_msgs/MultiArrayDimension.h"
+#include "std_msgs/Int32MultiArray.h"
+#include "controller/canMessage.h"
+#include <sstream>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <termios.h>
+#include <string.h>
+#include <time.h>
+#include <stdint.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <netdb.h>
+#include <assert.h>
+#include <linux/serial.h>
+
+static int rate_to_constant(int baudrate) 
+{
+#define B(x) case x: return B##x
+  switch(baudrate) 
+    {
+      B(50);     B(75);     B(110);    B(134);    B(150);
+      B(200);    B(300);    B(600);    B(1200);   B(1800);
+      B(2400);   B(4800);   B(9600);   B(19200);  B(38400);
+      B(57600);  B(115200); B(230400); B(460800); B(500000); 
+      B(576000); B(921600); B(1000000);B(1152000);B(1500000); 
+    default: return 0;
+    }
+#undef B
+} 
+
+/*
+ * Serial Port Receive Struct.
+ */
+typedef struct
+{
+  int start;
+  char lastInData;
+  char buf[12];
+  int n;
+  char sum;
+  int error;
+  int ID;
+  int Flag;
+  int Index;
+  int SubIndex;
+  int Data;
+}serialObj;
+
+serialObj serial;
+int fd;
+
+/*
+ * Serial Port Object Parameters Initialize.
+ */
+void serialObjInit( void )
+{
+  serial.start = 0;
+  serial.lastInData = 0;
+  serial.n = 0;
+  serial.sum =(char)( 0xaa+0xfe);
+  serial.error = 0;
+  serial.ID = 0;
+  serial.Index = 0;
+  serial.SubIndex = 0;
+  serial.Data = 0;
+}
+/*
+ * Print Error Message.
+ */
+void error(const char *msg)
+{
+  perror(msg);
+  exit(0);
+}
+
+/*
+ * Set the Serial Port Unblock.
+ */
+void set_nonblock(int socket)
+{
+  int flags;
+  flags = fcntl(socket,F_GETFL,0);
+  assert(flags != -1);
+  fcntl(socket, F_SETFL, flags | O_NONBLOCK);
+}
+
+/*
+ * Serial Port Init.
+ * Attention: In this function, baud is not used.
+ * To set baudrate, chage the B230400 to B115200 or some value else.
+ */
+int elCommInit(char *portName, int rate)
+{
+  struct termios options;
+  int fd;
+  char *ip;
+  char *tcpPortNumString;
+  long int tcpPortNum;
+  int sockfd;
+  struct sockaddr_in serv_addr;
+  struct hostent *server;
+  int rv;
+  int speed =0;
+  
+  if (*portName == '/') {	// linux serial port names always begin with /dev
+    printf("Opening serial port %s\n", portName);
+    fd = open(portName, O_RDWR | O_NOCTTY | O_NDELAY);
+    if (fd == -1){
+      //Could not open the port.
+      perror("init(): Unable to open serial port - ");
+    }
+    else
+      {
+	speed = rate_to_constant(rate);
+	fcntl(fd, F_SETFL, FNDELAY); // Sets the read() function to return NOW and not wait for data to enter buffer if there isn't anything there.
+	//Configure port for 8N1 transmission
+	tcgetattr(fd, &options);	//Gets the current options for the port
+	cfsetispeed(&options, speed ?: B38400);	//Sets the Input Baud Rate
+	cfsetospeed(&options, speed ?: B38400);	//Sets the Output Baud Rate
+	options.c_cflag |= (CLOCAL | CREAD);	//? all these set options for 8N1 serial operations
+	options.c_cflag &= ~PARENB;
+	options.c_cflag &= ~CSTOPB;
+	options.c_cflag &= ~CSIZE;
+	options.c_cflag |= CS8;
+	options.c_cflag &= ~CRTSCTS;
+	options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);	// set raw mode
+	options.c_iflag &= ~(IXON | IXOFF | IXANY);	// disable SW flow control
+	options.c_oflag &= ~OPOST;
+	tcsetattr(fd, TCSANOW, &options);	//Set the new options for the port "NOW"
+      }
+    return fd;
+  } 
+  return -1;
+}
+
+/*
+ * Send Message Function: Send a CAN Message via a Serial Port.
+ */
+void sendMessage(int fd, int ID, int flag, int Index, int Subindex, int Data )
+{
+  char buf[20];
+  char sum=0;
+  int i=0;
+  buf[0]=0xff;
+  buf[1]=0x55;
+  // Id
+  buf[2]=ID;
+  // Flag
+  buf[3]=flag;
+  // Index
+  buf[4]=(Index>>8);
+  buf[5]=(Index&0xff);
+  // Subindex
+  buf[6]=Subindex;
+  // Data
+  buf[7]=(Data>>24)&0xff;
+  buf[8]=(Data>>16)&0xff;
+  buf[9]=(Data>>8)&0xff;
+  buf[10]=(Data&0xff);
+  // Sum
+  for(i=0;i<11;i++)
+    {
+      sum += buf[i];
+    }
+  buf[11]=sum;
+  write(fd,buf,12);
+}
+
+/*
+ * Callback Fucntion: Subscribe messages and send them via serial port
+ */
+void callback( const controller::canMessage::ConstPtr& msg )
+{
+  //	JointPosition[0]=msg->data[0];
+  //	JointPosition[1]=msg->data[1];
+  //	JointPosition[2]=msg->data[2];
+  //	JointPosition[3]=msg->data[3];
+  //	JointPosition[4]=msg->data[4];
+  // ROS_INFO("I heard: [%x]", msg->Index);
+  sendMessage(fd,msg->ID,msg->PreIndex,msg->Index,msg->SubIndex,msg->Data);
+}
+/*
+ * Main Function.
+ */
+int main( int argc, char **argv )
+{
+  ros::init(argc,argv,"can_bus");
+  ros::NodeHandle n;
+  //ros::Publisher chatter_pub = n.advertise<std_msgs::String>("chatter", 1000);
+  ros::Rate loop_rate(1000);
+	
+  ros::Publisher pub=n.advertise<controller::canMessage>("canReceive",5);
+  ros::Subscriber sub = n.subscribe("canSend", 1,callback);
+  std_msgs::Int32MultiArray JointPosition;
+  controller::canMessage canReceiveMessage;
+  int k;
+  int id;
+  char port[] = "/dev/ttyUSB0";
+  //char port[] = "/dev/pts/9";
+  char r[20];
+  char inData;
+  int i;
+  JointPosition.data.resize(5);
+  serialObjInit();
+  fd = elCommInit(port,1500000);
+  ROS_INFO("Baudrate 1.5Mbps");
+  //fd = serial_open(port,230400);
+  if(fd>0)	
+    while(ros::ok())
+      {
+	k=read(fd,&r[0],sizeof(r));
+	if(k>0)
+	  {
+	    r[k]='\0';
+	    for(i=0;i<k;i++)
+	      {
+		inData = r[i];
+		if( ((inData&0xff) == 0xaa)&&((serial.lastInData&0xff) == 0xfe) )
+		  {
+		    serial.start |= 0x01;
+		    serial.sum = (char)(0xaa+0xfe);
+		  }
+		serial.lastInData = inData;
+		if( serial.start != 0 )
+		  {
+		    serial.buf[serial.n]=inData&0xff;
+		    serial.n++;
+		    if( serial.n >10 )
+		      {
+			for(serial.n=1;serial.n<10;serial.n++)
+			  {
+			    serial.sum += serial.buf[serial.n];
+			  }
+
+			if( serial.sum == serial.buf[10] )
+			  {
+			    serial.ID = (serial.buf[1]&0xff);
+			    serial.Flag = (serial.buf[2]&0xff);
+			    serial.Index = ((serial.buf[3]&0xff)<<8) + (serial.buf[4]&0xff);
+			    serial.SubIndex = (serial.buf[5]&0xff);
+			    serial.Data = ((serial.buf[6]&0xff)<<24) + ((serial.buf[7]&0xff)<<16) + ((serial.buf[8]&0xff)<<8) + (serial.buf[9]&0xff);
+			    canReceiveMessage.ID=serial.ID;
+			    canReceiveMessage.PreIndex=serial.Flag;
+			    canReceiveMessage.Index=serial.Index;
+			    canReceiveMessage.SubIndex=serial.SubIndex;
+			    canReceiveMessage.Data=serial.Data;
+			    pub.publish(canReceiveMessage);
+			  }
+			else
+			  {
+			    serial.error++;
+			    printf("Total error:%d\n",serial.error);
+			  }
+			serial.n = 0;
+			serial.start = 0;
+		      }
+		  }
+	      }
+	  }
+	ros::spinOnce();
+	loop_rate.sleep();
+      }
+  return 0;
+}
+
