@@ -1,0 +1,5 @@
+<launch>
+
+<node pkg="controller" name="serialport" type="serialport" respawn="true"/>
+<node pkg="controller" name="my_scara" type="my_scara" respawn="true"/>
+</launch>

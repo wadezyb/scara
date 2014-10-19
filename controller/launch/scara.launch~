@@ -1,0 +1,5 @@
+<launch>
+
+<node pkg="controller" name="can_bus" type="can_bus" respawn="true"/>
+<node pkg="controller" name="demo" type="demo" respawn="true"/>
+</launch>
