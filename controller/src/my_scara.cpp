@@ -32,15 +32,16 @@ std_msgs::Int32MultiArray serialMsg;
 std_msgs::Float32MultiArray jointAngleMsg;
 geometry_msgs::Pose robotCurrentPose;
 
-int L[]={225,125};//Arm length
+float L[]={225.0,125.0};//Arm length
 float JRes[]={0.0010986*K,0.0017578*K,0.0032552,0.0077097*K};// ras/pulse, rad/pulse, mm/pulse, rad/pulse
-int JZero[]={(109958-106449)/2,(57480-111044)/2,-3957,3290};
+int JZero[]={(109958-106449)/2,(57480-111044)/2,-7454,-25510};
 PosBufType PB;//Position Buffer
 PosBufType prePB;// for moving from current to starting point
 int num =0;// number of point to be insert to the path from current to starting point
 int startPubFlag = 0;
 float jointCurrentAngle[4];
-float pitch = 16.0/PI;
+float pitch = 16.0/2/PI;
+
 /*
  * Callback Fuction
  * 1. Get Driver Information and save to JointInfo.
@@ -57,7 +58,7 @@ void callback( const std_msgs::Int32MultiArray::ConstPtr& msg )
   jointAngleMsg.data[3] =   jointCurrentAngle[3]/K;
   robotCurrentPose.position.x = L[0]*cos(jointCurrentAngle[0])+L[1]*cos(jointCurrentAngle[0]+jointCurrentAngle[1]);
   robotCurrentPose.position.y = L[0]*sin(jointCurrentAngle[0])+L[1]*sin(jointCurrentAngle[0]+jointCurrentAngle[1]);
-  robotCurrentPose.position.z = jointCurrentAngle[2]-pitch*jointCurrentAngle[4];
+  robotCurrentPose.position.z = jointCurrentAngle[2]-pitch*jointCurrentAngle[3];
   robotCurrentPose.orientation.x = 0;
   robotCurrentPose.orientation.y = 0;
   robotCurrentPose.orientation.z = 1;
@@ -123,10 +124,12 @@ void callback2( const std_msgs::Float32MultiArray::ConstPtr& msg )
       startAngle[1] = (PB.data[0][1]-JZero[1])*JRes[1];
       startAngle[2] = (PB.data[0][2]-JZero[2])*JRes[2];
       startAngle[3] = (PB.data[0][3]-JZero[3])*JRes[3];
-      ROS_INFO("startingAngle0 is %f",startAngle[0]);
+      //      ROS_INFO("startingAngle3 is %f",startAngle[2]);
       startPose.position.x = L[0]*cos(startAngle[0])+L[1]*cos(startAngle[0]+startAngle[1]);
       startPose.position.y = L[0]*sin(startAngle[0])+L[1]*sin(startAngle[0]+startAngle[1]);
       startPose.position.z = startAngle[2]-pitch*startAngle[3];
+      // ROS_INFO("h34z is %f,%f,%f,%f",pitch,startAngle[2],startAngle[3],startPose.position.z);
+      
       startPose.orientation.w = startAngle[0]+startAngle[1]+startAngle[3];
 
       ROS_INFO("start(x,y,z,theta) is (%f,%f,%f,%f)",startPose.position.x,startPose.position.y,startPose.position.z,startPose.orientation.w);
@@ -138,40 +141,44 @@ void callback2( const std_msgs::Float32MultiArray::ConstPtr& msg )
 (startPose.position.y - robotCurrentPose.position.y)*(startPose.position.y - robotCurrentPose.position.y)
 +
 (startPose.position.z - robotCurrentPose.position.z)*(startPose.position.z - robotCurrentPose.position.z)
-//+
-//2*(startPose.orientation.w - robotCurrentPose.orientation.w)*(startPose.orientation.w - robotCurrentPose.orientation.w)
++
+2*(startPose.orientation.w - robotCurrentPose.orientation.w)*(startPose.orientation.w - robotCurrentPose.orientation.w)
 );
-      ROS_INFO("distance is %f",distance);
+      //      ROS_INFO("distance is %f",distance);
       num = distance*2;
       ROS_INFO("plan %d points in the path",num);
-      dx = (startPose.position.x - robotCurrentPose.position.x)/num;
-      dy = (startPose.position.y - robotCurrentPose.position.y)/num;
-      dz = (startPose.position.z - robotCurrentPose.position.z)/num;
-      dtheta = (startPose.orientation.w - robotCurrentPose.orientation.w)/num;
-      if( num < 2000 )
-	for(i=0;i<=num;i++)
-	  {
-	    tempx = robotCurrentPose.position.x + dx*i;
-	    tempy = robotCurrentPose.position.y + dy*i;
-	    temp_theta = robotCurrentPose.orientation.w+dtheta*i;
-	    tempz = robotCurrentPose.position.z + dz*i;
-	    // inverse to joint position
-	    radius = sqrt(tempx*tempx + tempy*tempy);
-	    temp_theta0 = PI/2 - atan(tempx/tempy);
-	    temp_theta1 = temp_theta0 - acos((radius*radius+L[0]*L[0]-L[1]*L[1])/2.0/radius/L[0]);
-	    temp_theta2 = PI - acos((L[0]*L[0]+L[1]*L[1]-radius*radius)/2.0/L[0]/L[1]);
-	    temp_theta4 = temp_theta - temp_theta1 - temp_theta2;
-	    temp_theta3 = tempz + pitch*temp_theta4;
-	    
-	    prePB.data[i][0] = (temp_theta1-PI/2.0)/JRes[0]+JZero[0];
-	    prePB.data[i][1] = (temp_theta2/JRes[1]+JZero[1]);
-	    prePB.data[i][2] = temp_theta3/JRes[2]+JZero[2];
-	    prePB.data[i][3] = temp_theta4/JRes[3]+JZero[3];
-	  }
-      else
+      if( num >0 )
 	{
-	  ROS_INFO("too far away!!");
+	  dx = (startPose.position.x - robotCurrentPose.position.x)/num;
+	  dy = (startPose.position.y - robotCurrentPose.position.y)/num;
+	  dz = (startPose.position.z - robotCurrentPose.position.z)/num;
+	  dtheta = (startPose.orientation.w - robotCurrentPose.orientation.w)/num;
+	  if( num < 2000 )
+	    for(i=0;i<=num;i++)
+	      {
+		tempx = robotCurrentPose.position.x + dx*i;
+		tempy = robotCurrentPose.position.y + dy*i;
+		temp_theta = robotCurrentPose.orientation.w+dtheta*i;
+		tempz = robotCurrentPose.position.z + dz*i;
+		// inverse to joint position
+		radius = sqrt(tempx*tempx + tempy*tempy);
+		temp_theta0 = PI/2 - atan(tempx/tempy);
+		temp_theta1 = temp_theta0 - acos((radius*radius+L[0]*L[0]-L[1]*L[1])/2.0/radius/L[0]);
+		temp_theta2 = PI - acos((L[0]*L[0]+L[1]*L[1]-radius*radius)/2.0/L[0]/L[1]);
+		temp_theta4 = temp_theta - temp_theta1 - temp_theta2;
+		temp_theta3 = tempz + pitch*temp_theta4;
+	    
+		prePB.data[i][0] = (temp_theta1-PI/2.0)/JRes[0]+JZero[0];
+		prePB.data[i][1] = (temp_theta2/JRes[1]+JZero[1]);
+		prePB.data[i][2] = temp_theta3/JRes[2]+JZero[2];
+		prePB.data[i][3] = temp_theta4/JRes[3]+JZero[3];
+	      }
+	  else
+	    {
+	      ROS_INFO("too far away!!");
+	    }
 	}
+
     }
 }
 /*
